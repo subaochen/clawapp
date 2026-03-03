@@ -350,6 +350,31 @@ export class WsClient {
     return this.request('sessions.reset', { key })
   }
 
+  async getSessionProgress(sessionKey, options = {}) {
+    if (!this._baseUrl) throw new Error('未连接')
+    const preferSessionKey = !!options.preferSessionKey
+    const query = new URLSearchParams()
+    if (sessionKey) query.set('sessionKey', sessionKey)
+    if (this._sid && !preferSessionKey) query.set('sid', this._sid)
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+    try {
+      const res = await fetch(`${this._baseUrl}/api/progress?${query.toString()}`, {
+        method: 'GET',
+        signal: controller.signal,
+      })
+      clearTimeout(timer)
+      const data = await res.json()
+      if (!data.ok) throw new Error(data.error || '获取进度失败')
+      return data
+    } catch (e) {
+      clearTimeout(timer)
+      if (e.name === 'AbortError') throw new Error('查询进度超时')
+      throw e
+    }
+  }
+
   // ==================== 内部辅助 ====================
 
   _setConnected(val, status, errorMsg) {

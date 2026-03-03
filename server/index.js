@@ -72,6 +72,18 @@ const REQUEST_TIMEOUT = 30000;
 const CONNECT_TIMEOUT = 10000;
 const GATEWAY_RETRY_COUNT = 3;
 const GATEWAY_RETRY_DELAY = 1000;
+const PROGRESS_STALE_TIMEOUT = 120000;
+
+function setSessionProgress(session, patch = {}) {
+  session.progress = {
+    isBusy: session.progress?.isBusy || false,
+    sessionKey: session.progress?.sessionKey || '',
+    runId: session.progress?.runId || '',
+    state: session.progress?.state || 'idle',
+    updatedAt: Date.now(),
+    ...patch,
+  };
+}
 
 /**
  * 生成 connect 握手帧（含 Ed25519 device 签名）
@@ -173,6 +185,47 @@ function handleUpstreamMessage(sid, rawData) {
 
     // 事件 → 推送 SSE（统一用 message 事件名，原始事件类型在 data 中）
     if (msg.type === 'event') {
+      if (msg.event === 'chat') {
+        const payload = msg.payload || {};
+        const state = payload.state;
+        if (state === 'delta') {
+          setSessionProgress(session, {
+            isBusy: true,
+            sessionKey: payload.sessionKey || session.progress?.sessionKey || '',
+            runId: payload.runId || session.progress?.runId || '',
+            state: 'streaming',
+          });
+        } else if (state === 'final' || state === 'error' || state === 'aborted') {
+          setSessionProgress(session, {
+            isBusy: false,
+            sessionKey: payload.sessionKey || session.progress?.sessionKey || '',
+            runId: payload.runId || session.progress?.runId || '',
+            state,
+          });
+        }
+      }
+
+      if (msg.event === 'agent') {
+        const payload = msg.payload || {};
+        const stream = payload.stream;
+        const phase = payload.data?.phase;
+        if (stream === 'lifecycle' && phase === 'start') {
+          setSessionProgress(session, {
+            isBusy: true,
+            sessionKey: payload.sessionKey || session.progress?.sessionKey || '',
+            runId: payload.runId || session.progress?.runId || '',
+            state: 'lifecycle.start',
+          });
+        } else if (stream === 'lifecycle' && phase === 'end') {
+          setSessionProgress(session, {
+            isBusy: false,
+            sessionKey: payload.sessionKey || session.progress?.sessionKey || '',
+            runId: payload.runId || session.progress?.runId || '',
+            state: 'lifecycle.end',
+          });
+        }
+      }
+
       log.debug(`SSE 推送 [${sid}] event=${msg.event} stream=${msg.payload?.stream} phase=${msg.payload?.data?.phase} state=${msg.payload?.state}`);
       sseWrite(session, 'message', msg);
     }
@@ -373,6 +426,13 @@ app.post('/api/connect', async (req, res) => {
     _heartbeat: null,
     _lingerTimer: null,
     _sseHeartbeat: null,
+    progress: {
+      isBusy: false,
+      sessionKey: '',
+      runId: '',
+      state: 'idle',
+      updatedAt: Date.now(),
+    },
   };
   sessions.set(sid, session);
 
@@ -496,6 +556,55 @@ app.get('/api/events', (req, res) => {
   });
 });
 
+/** GET /api/progress — 查询会话执行状态（用于刷新后恢复 loading） */
+app.get('/api/progress', (req, res) => {
+  const sid = String(req.query.sid || '');
+  const sessionKey = String(req.query.sessionKey || '');
+
+  const toResponse = (sourceSid, progress) => {
+    const now = Date.now();
+    const updatedAt = Number(progress?.updatedAt || 0);
+    const stale = updatedAt > 0 && (now - updatedAt > PROGRESS_STALE_TIMEOUT);
+    const busy = !!progress?.isBusy && !stale;
+    return res.json({
+      ok: true,
+      sid: sourceSid || '',
+      sessionKey: progress?.sessionKey || sessionKey || '',
+      busy,
+      runId: progress?.runId || '',
+      state: stale ? 'stale' : (progress?.state || 'idle'),
+      updatedAt: updatedAt || now,
+      stale,
+    });
+  };
+
+  if (sid) {
+    const session = sessions.get(sid);
+    if (!session) return res.status(404).json({ ok: false, error: '会话不存在' });
+    return toResponse(sid, session.progress || {});
+  }
+
+  if (sessionKey) {
+    for (const [activeSid, session] of sessions) {
+      if ((session.progress?.sessionKey || '') === sessionKey) {
+        return toResponse(activeSid, session.progress || {});
+      }
+    }
+    return res.json({
+      ok: true,
+      sid: '',
+      sessionKey,
+      busy: false,
+      runId: '',
+      state: 'idle',
+      updatedAt: Date.now(),
+      stale: false,
+    });
+  }
+
+  return res.status(400).json({ ok: false, error: '缺少 sid 或 sessionKey' });
+});
+
 /** POST /api/send — 发送请求（RPC 转发） */
 app.post('/api/send', async (req, res) => {
   const { sid, method, params } = req.body || {};
@@ -515,6 +624,15 @@ app.post('/api/send', async (req, res) => {
 
   log.info(`RPC 请求 [${sid}] id=${reqId} method=${method}`);
   const frame = { type: 'req', id: reqId, method, params };
+
+  if (method === 'chat.send') {
+    setSessionProgress(session, {
+      isBusy: true,
+      sessionKey: params?.sessionKey || session.progress?.sessionKey || '',
+      runId: '',
+      state: 'sending',
+    });
+  }
 
   try {
     const result = await new Promise((resolve, reject) => {

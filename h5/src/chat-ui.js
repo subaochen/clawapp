@@ -7,6 +7,7 @@ import { initSettings, showSettings } from './settings.js'
 import { saveMessage, saveMessages, getLocalMessages, clearSessionMessages, isStorageAvailable, saveSessionInfo } from './message-db.js'
 
 const STORAGE_SESSION_KEY = 'clawapp-session-key'
+const STORAGE_PENDING_KEY = 'clawapp-pending-sessions'
 
 let _messagesEl = null
 let _typingEl = null
@@ -152,6 +153,57 @@ export function setSessionKey(key) {
 }
 export function getSessionKey() { return _sessionKey }
 
+function readPendingSessions() {
+  try {
+    const raw = localStorage.getItem(STORAGE_PENDING_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writePendingSessions(map) {
+  try {
+    localStorage.setItem(STORAGE_PENDING_KEY, JSON.stringify(map || {}))
+  } catch {}
+}
+
+function markSessionPending(pending) {
+  if (!_sessionKey) return
+  const map = readPendingSessions()
+  if (pending) map[_sessionKey] = Date.now()
+  else delete map[_sessionKey]
+  writePendingSessions(map)
+}
+
+function isSessionMarkedPending() {
+  if (!_sessionKey) return false
+  const map = readPendingSessions()
+  return !!map[_sessionKey]
+}
+
+async function restorePendingIndicator() {
+  if (!_sessionKey) return
+  const localPending = isSessionMarkedPending()
+  if (localPending) showTyping(true)
+
+  try {
+    const progress = await wsClient.getSessionProgress(_sessionKey, { preferSessionKey: true })
+    if (progress?.busy) {
+      showTyping(true)
+      markSessionPending(true)
+      return
+    }
+    if (localPending) {
+      showTyping(false)
+      markSessionPending(false)
+    }
+  } catch (e) {
+    console.warn('[chat] restorePendingIndicator failed:', e)
+  }
+}
+
 export function initChatUI(onSettings) {
   _messagesEl = document.getElementById('chat-messages')
   _typingEl = document.getElementById('typing-indicator')
@@ -204,6 +256,7 @@ export function initChatUI(onSettings) {
     if (status === 'ready' || status === 'connected') {
       dot.classList.add('connected')
       hideDisconnectBanner()
+      restorePendingIndicator().catch(() => {})
     } else if (status === 'connecting' || status === 'reconnecting') {
       dot.classList.add('connecting')
       showDisconnectBanner(true)
@@ -212,6 +265,8 @@ export function initChatUI(onSettings) {
       showDisconnectBanner(false)
     }
   })
+
+  restorePendingIndicator().catch(() => {})
 }
 
 function toggleVoiceInput(SR) {
@@ -335,6 +390,7 @@ async function doSend(text, attachments) {
     saveMessage({ id: uuid(), sessionKey: _sessionKey, role: 'user', content: text, attachments: attachments?.length ? attachments : undefined, timestamp: Date.now() })
   }
   showTyping(true)
+  markSessionPending(true)
   _isSending = true
   _textarea.disabled = true
 
@@ -342,6 +398,7 @@ async function doSend(text, attachments) {
     await wsClient.chatSend(_sessionKey, text, attachments.length ? attachments : undefined)
   } catch (err) {
     showTyping(false)
+    markSessionPending(false)
     if (isSessionMissingError(err.message)) {
       fallbackToDefaultSessionWithNotice()
       return
@@ -365,11 +422,13 @@ function processMessageQueue() {
   const next = _messageQueue.shift()
   // 用户消息已经在入队时 append 过了，这里不再 append
   showTyping(true)
+  markSessionPending(true)
   _isSending = true
   _textarea.disabled = true
   wsClient.chatSend(_sessionKey, next.text, next.attachments?.length ? next.attachments : undefined)
     .catch(err => {
       showTyping(false)
+      markSessionPending(false)
       if (isSessionMissingError(err.message)) {
         fallbackToDefaultSessionWithNotice()
         return
@@ -520,6 +579,7 @@ function handleChatEvent(payload) {
     }
     // 非流式状态，终态错误
     showTyping(false)
+    markSessionPending(false)
     appendSystemMessage(`${t('chat.error.prefix')}: ${errMsg}`)
     resetStreamState()
     processMessageQueue()
@@ -618,6 +678,7 @@ function resetStreamState() {
   _currentRunId = null
   _isStreaming = false
   _toolCards.clear()
+  markSessionPending(false)
   updateSendState()
 }
 
@@ -1322,7 +1383,10 @@ function switchSession(newKey) {
   resetStreamState()
   updateSessionTitle()
   showLoadingOverlay()
-  loadHistory().finally(() => hideLoadingOverlay())
+  loadHistory().finally(() => {
+    hideLoadingOverlay()
+    restorePendingIndicator().catch(() => {})
+  })
 }
 
 /** 加载遮罩 */
