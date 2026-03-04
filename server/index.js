@@ -30,6 +30,7 @@ const CONFIG = {
   proxyToken: process.env.PROXY_TOKEN || '',
   gatewayUrl: process.env.OPENCLAW_GATEWAY_URL || 'ws://127.0.0.1:18789',
   gatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+  gatewayPassword: process.env.OPENCLAW_GATEWAY_PASSWORD || '',
   mediaAllowAll: process.env.MEDIA_ALLOW_ALL === '1',
   h5DistPath: join(__dirname, '../h5/dist'),
 };
@@ -91,8 +92,12 @@ function setSessionProgress(session, patch = {}) {
  */
 function createConnectFrame(nonce) {
   const signedAt = Date.now();
-  const payload = ['v2', deviceKey.deviceId, 'gateway-client', 'backend', 'operator', SCOPES.join(','), String(signedAt), CONFIG.gatewayToken, nonce || ''].join('|');
+  const credential = CONFIG.gatewayPassword || CONFIG.gatewayToken;
+  const payload = ['v2', deviceKey.deviceId, 'gateway-client', 'backend', 'operator', SCOPES.join(','), String(signedAt), credential, nonce || ''].join('|');
   const signature = ed25519Sign(null, Buffer.from(payload, 'utf8'), devicePrivateKey).toString('base64url');
+  const auth = CONFIG.gatewayPassword
+    ? { password: CONFIG.gatewayPassword }
+    : { token: CONFIG.gatewayToken };
   return {
     type: 'req',
     id: `connect-${randomUUID()}`,
@@ -103,7 +108,7 @@ function createConnectFrame(nonce) {
       role: 'operator',
       scopes: SCOPES,
       caps: [],
-      auth: { token: CONFIG.gatewayToken },
+      auth,
       device: { id: deviceKey.deviceId, publicKey: deviceKey.publicKey, signedAt, nonce, signature },
       locale: 'zh-CN',
       userAgent: 'OpenClaw-Mobile-Proxy/1.0.0',
