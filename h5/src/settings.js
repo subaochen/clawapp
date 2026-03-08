@@ -96,6 +96,17 @@ export function showSettings() {
       </div>
 
       <div class="settings-section" style="margin-top:16px">
+        <div class="settings-label">${t('settings.password')}</div>
+        <div class="settings-pwd-form" id="pwd-form">
+          <input type="password" id="pwd-current" class="settings-pwd-input" placeholder="${t('settings.password.current')}" />
+          <input type="password" id="pwd-new" class="settings-pwd-input" placeholder="${t('settings.password.new')}" />
+          <input type="password" id="pwd-confirm" class="settings-pwd-input" placeholder="${t('settings.password.confirm')}" />
+          <div class="settings-pwd-msg" id="pwd-msg"></div>
+          <button class="settings-toggle" id="pwd-submit">${t('settings.password.submit')}</button>
+        </div>
+      </div>
+
+      <div class="settings-section" style="margin-top:16px">
         <button class="settings-disconnect-btn" id="settings-disconnect">
           ${t('settings.disconnect')}
         </button>
@@ -163,6 +174,52 @@ export function showSettings() {
       const permission = await requestPermission()
       const section = panel.querySelector('#notify-section')
       if (section) section.innerHTML = renderNotifySection()
+    }
+  }
+
+  // 修改密码
+  const pwdSubmit = panel.querySelector('#pwd-submit')
+  if (pwdSubmit) {
+    pwdSubmit.onclick = async () => {
+      const cur = panel.querySelector('#pwd-current').value
+      const nw = panel.querySelector('#pwd-new').value
+      const cf = panel.querySelector('#pwd-confirm').value
+      const msg = panel.querySelector('#pwd-msg')
+      msg.textContent = ''
+      msg.className = 'settings-pwd-msg'
+
+      if (!nw || nw.length < 4) { msg.textContent = t('settings.password.error.short'); msg.classList.add('error'); return }
+      if (nw !== cf) { msg.textContent = t('settings.password.error.mismatch'); msg.classList.add('error'); return }
+
+      pwdSubmit.disabled = true
+      try {
+        const res = await fetch('/api/change-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentToken: cur, newToken: nw })
+        })
+        const data = await res.json()
+        if (!data.ok) {
+          msg.textContent = res.status === 401 ? t('settings.password.error.wrong') : (data.error || t('settings.password.error.fail'))
+          msg.classList.add('error')
+        } else {
+          msg.textContent = t('settings.password.success')
+          msg.classList.add('success')
+          panel.querySelector('#pwd-current').value = ''
+          panel.querySelector('#pwd-new').value = ''
+          panel.querySelector('#pwd-confirm').value = ''
+          // 更新本地存储的 token
+          try {
+            const cfg = JSON.parse(localStorage.getItem('clawapp-config') || '{}')
+            if (cfg.token) { cfg.token = nw; localStorage.setItem('clawapp-config', JSON.stringify(cfg)) }
+          } catch {}
+        }
+      } catch (e) {
+        msg.textContent = t('settings.password.error.fail')
+        msg.classList.add('error')
+      } finally {
+        pwdSubmit.disabled = false
+      }
     }
   }
 

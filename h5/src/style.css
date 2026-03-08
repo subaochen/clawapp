@@ -218,15 +218,6 @@ html, body {
   min-height: 20px;
 }
 
-/* 自动检测 Token 提示 */
-.setup-hint {
-  color: var(--success);
-  font-size: 13px;
-  text-align: center;
-  margin-bottom: 4px;
-  padding: 6px 0;
-}
-
 /* 登录页帮助提示 */
 .setup-tips {
   margin-top: 16px;

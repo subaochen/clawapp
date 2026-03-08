@@ -22,16 +22,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ENV_PATH = join(__dirname, '.env');
 
-// 自动创建 .env（首次启动时生成随机密码）
-let _autoCreatedToken = '';
+// 自动创建 .env（首次启动时生成临时密码，等待用户设置）
+let _isFirstRun = false;
 if (!existsSync(ENV_PATH)) {
-  _autoCreatedToken = randomBytes(12).toString('base64url');
+  const tmpToken = randomBytes(12).toString('base64url');
   const content = [
     '# ClawApp 配置文件（自动生成）',
     'PROXY_PORT=3210',
     '',
     '# H5 客户端连接密码（登录时填写的 Token）',
-    `PROXY_TOKEN=${_autoCreatedToken}`,
+    `PROXY_TOKEN=${tmpToken}`,
     '',
     '# OpenClaw Gateway 地址',
     'OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789',
@@ -41,17 +41,29 @@ if (!existsSync(ENV_PATH)) {
     '',
   ].join('\n');
   writeFileSync(ENV_PATH, content, 'utf8');
-  console.log(`[INFO] 已自动创建配置文件: ${ENV_PATH}`);
-  console.log(`[INFO] 已生成随机连接密码 (PROXY_TOKEN): ${_autoCreatedToken}`);
+  _isFirstRun = true;
+  console.log('[INFO] 首次启动，已创建配置文件，等待用户设置连接密码...');
 }
 
 // 加载环境变量
 config({ path: ENV_PATH });
 
+/** 更新 .env 中的 PROXY_TOKEN */
+function updateEnvToken(newToken) {
+  let content = readFileSync(ENV_PATH, 'utf8');
+  if (/^PROXY_TOKEN=.*/m.test(content)) {
+    content = content.replace(/^PROXY_TOKEN=.*/m, `PROXY_TOKEN=${newToken}`);
+  } else {
+    content += `\nPROXY_TOKEN=${newToken}\n`;
+  }
+  writeFileSync(ENV_PATH, content, 'utf8');
+  CONFIG.proxyToken = newToken;
+}
+
 // 配置
 const CONFIG = {
   port: parseInt(process.env.PROXY_PORT, 10) || 3210,
-  proxyToken: process.env.PROXY_TOKEN || _autoCreatedToken || '',
+  proxyToken: process.env.PROXY_TOKEN || '',
   gatewayUrl: process.env.OPENCLAW_GATEWAY_URL || 'ws://127.0.0.1:18789',
   gatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN || '',
   gatewayPassword: process.env.OPENCLAW_GATEWAY_PASSWORD || '',
@@ -760,17 +772,48 @@ app.get('/media', (req, res) => {
 
 // ==================== API 路由 ====================
 
-/** GET /api/setup-hint — 仅 localhost 可访问，返回自动生成的连接密码 */
+/** GET /api/setup-hint — 仅 localhost 可访问，返回是否首次运行（不暴露 token） */
 app.get('/api/setup-hint', (req, res) => {
   const ip = req.ip || req.connection?.remoteAddress || '';
   const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost'].includes(ip);
   if (!isLocal) {
     return res.status(403).json({ ok: false });
   }
-  if (!CONFIG.proxyToken) {
-    return res.json({ ok: false });
+  res.json({ ok: true, firstRun: _isFirstRun });
+});
+
+/** POST /api/setup — 首次运行设置密码（仅 localhost + firstRun） */
+app.post('/api/setup', (req, res) => {
+  const ip = req.ip || req.connection?.remoteAddress || '';
+  const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost'].includes(ip);
+  if (!isLocal) {
+    return res.status(403).json({ ok: false, error: '仅限本机访问' });
   }
-  res.json({ ok: true, token: CONFIG.proxyToken });
+  if (!_isFirstRun) {
+    return res.status(400).json({ ok: false, error: '已完成初始设置' });
+  }
+  const { password } = req.body || {};
+  if (!password || typeof password !== 'string' || password.length < 4) {
+    return res.status(400).json({ ok: false, error: '密码长度至少 4 位' });
+  }
+  updateEnvToken(password);
+  _isFirstRun = false;
+  log.info(`[setup] 用户已设置连接密码`);
+  res.json({ ok: true, token: password });
+});
+
+/** POST /api/change-token — 修改连接密码（需当前 token 认证） */
+app.post('/api/change-token', (req, res) => {
+  const { currentToken, newToken } = req.body || {};
+  if (!currentToken || !validateToken(currentToken)) {
+    return res.status(401).json({ ok: false, error: '当前密码错误' });
+  }
+  if (!newToken || typeof newToken !== 'string' || newToken.length < 4) {
+    return res.status(400).json({ ok: false, error: '新密码长度至少 4 位' });
+  }
+  updateEnvToken(newToken);
+  log.info('[setup] 用户已修改连接密码');
+  res.json({ ok: true });
 });
 
 /** POST /api/connect — 建立会话 */
@@ -1090,8 +1133,10 @@ const server = createServer(app);
 server.listen(CONFIG.port, () => {
   log.info(`代理服务端已启动: http://0.0.0.0:${CONFIG.port}`);
   log.info(`架构: 手机 ←SSE+POST→ 代理服务端 ←WS→ Gateway(${CONFIG.gatewayUrl})`);
-  if (CONFIG.proxyToken) {
-    log.info(`连接密码 (Token): ${CONFIG.proxyToken}`);
+  if (_isFirstRun) {
+    log.info('首次运行，请在浏览器中打开上述地址设置连接密码');
+  } else if (CONFIG.proxyToken) {
+    log.info('连接密码已配置');
   } else {
     log.warn('未设置连接密码 (PROXY_TOKEN)，请在 server/.env 中配置');
   }

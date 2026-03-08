@@ -52,7 +52,6 @@ function createSetupPage() {
         <label>${t('setup.token')}</label>
         <input type="password" id="input-token" placeholder="${t('setup.token.placeholder')}" />
       </div>
-      <div class="setup-hint" id="setup-hint" style="display:none"></div>
       <button class="btn-primary" id="connect-btn">${t('setup.connect')}</button>
       <div class="setup-error" id="setup-error"></div>
       <div class="setup-tips">
@@ -81,6 +80,80 @@ function createSetupPage() {
   return page
 }
 
+/** 首次运行：将登录页变为「设置密码」表单 */
+function showFirstRunSetup(hostInput, errorEl) {
+  const card = document.querySelector('.setup-card')
+  if (!card) return
+
+  // 替换标题
+  const logo = card.querySelector('.setup-logo')
+  if (logo) {
+    logo.querySelector('h1').textContent = t('setup.firstrun.title')
+    logo.querySelector('p').textContent = t('setup.firstrun.subtitle')
+  }
+
+  // 隐藏原始 host/token 表单
+  card.querySelectorAll('.form-group').forEach(g => g.style.display = 'none')
+  const tipsEl = card.querySelector('.setup-tips')
+  if (tipsEl) tipsEl.style.display = 'none'
+
+  // 插入密码设置表单
+  const setupForm = document.createElement('div')
+  setupForm.className = 'setup-firstrun'
+  setupForm.innerHTML = `
+    <div class="form-group">
+      <label>${t('setup.firstrun.password')}</label>
+      <input type="password" id="firstrun-pwd" placeholder="${t('setup.firstrun.password.placeholder')}" />
+    </div>
+    <div class="form-group">
+      <label>${t('setup.firstrun.confirm')}</label>
+      <input type="password" id="firstrun-pwd-confirm" placeholder="${t('setup.firstrun.confirm.placeholder')}" />
+    </div>
+  `
+  const connectBtn = document.getElementById('connect-btn')
+  card.insertBefore(setupForm, connectBtn)
+
+  connectBtn.textContent = t('setup.firstrun.submit')
+
+  // 替换按钮行为
+  connectBtn.onclick = async () => {
+    const pwd = document.getElementById('firstrun-pwd').value
+    const pwd2 = document.getElementById('firstrun-pwd-confirm').value
+    errorEl.textContent = ''
+
+    if (!pwd || pwd.length < 4) { errorEl.textContent = t('setup.firstrun.error.short'); return }
+    if (pwd !== pwd2) { errorEl.textContent = t('setup.firstrun.error.mismatch'); return }
+
+    connectBtn.disabled = true
+    connectBtn.textContent = t('setup.connecting')
+    try {
+      const res = await fetch('/api/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd })
+      })
+      const data = await res.json()
+      if (!data.ok) {
+        errorEl.textContent = t('setup.firstrun.error.fail') + (data.error || '')
+        connectBtn.disabled = false
+        connectBtn.textContent = t('setup.firstrun.submit')
+        return
+      }
+      // 设置成功，自动连接
+      const host = hostInput.value.trim() || 'localhost:3210'
+      doConnect(host, data.token, errorEl, connectBtn)
+    } catch (e) {
+      errorEl.textContent = t('setup.firstrun.error.fail') + e.message
+      connectBtn.disabled = false
+      connectBtn.textContent = t('setup.firstrun.submit')
+    }
+  }
+
+  // Enter 键提交
+  const confirmInput = document.getElementById('firstrun-pwd-confirm')
+  if (confirmInput) confirmInput.onkeydown = (e) => { if (e.key === 'Enter') connectBtn.click() }
+}
+
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('hidden', p.id !== pageId))
 }
@@ -104,14 +177,11 @@ function initApp() {
     tokenInput.value = config.token
   }
 
-  // 自动检测 Token（仅 localhost 可用）
+  // 首次运行检测
   if (!config?.token) {
     fetch('/api/setup-hint').then(r => r.json()).then(data => {
-      if (data.ok && data.token && !tokenInput.value) {
-        tokenInput.value = data.token
-        tokenInput.type = 'text'
-        const hint = document.getElementById('setup-hint')
-        if (hint) { hint.textContent = t('setup.token.autofill'); hint.style.display = '' }
+      if (data.ok && data.firstRun) {
+        showFirstRunSetup(hostInput, errorEl)
       }
     }).catch(() => {})
   }
