@@ -5,6 +5,7 @@
 import { getTheme, setTheme } from './theme.js'
 import { getLang, setLang, t, onLangChange } from './i18n.js'
 import { requestPermission, isSupported as isNotifySupported } from './notify.js'
+import { getWakeupConfig, saveWakeupConfig, isSupported as isWakeupSupported, requestPermission as requestWakeupPermission } from './voice-wakeup.js'
 
 const LAYOUT_KEY = 'clawapp-layout'
 
@@ -96,6 +97,11 @@ export function showSettings() {
       </div>
 
       <div class="settings-section" style="margin-top:16px">
+        <div class="settings-label">${t('voice.wakeup.title')}</div>
+        <div id="wakeup-section">${renderWakeupSection()}</div>
+      </div>
+
+      <div class="settings-section" style="margin-top:16px">
         <div class="settings-label">${t('settings.password')}</div>
         <div class="settings-pwd-form" id="pwd-form">
           <input type="password" id="pwd-current" class="settings-pwd-input" placeholder="${t('settings.password.current')}" />
@@ -178,6 +184,62 @@ export function showSettings() {
     }
   }
 
+  // 语音唤醒设置
+  const wakeupEnabledCheckbox = panel.querySelector('#wakeup-enabled')
+  const wakeupConfigRow = panel.querySelector('#wakeup-config-row')
+  
+  if (wakeupEnabledCheckbox) {
+    wakeupEnabledCheckbox.onchange = () => {
+      const enabled = wakeupEnabledCheckbox.checked
+      if (wakeupConfigRow) {
+        wakeupConfigRow.style.display = enabled ? '' : 'none'
+      }
+    }
+  }
+  
+  const wakeupSaveBtn = panel.querySelector('#wakeup-save-btn')
+  if (wakeupSaveBtn) {
+    wakeupSaveBtn.onclick = async () => {
+      const enabled = wakeupEnabledCheckbox?.checked || false
+      const wakeupWord = panel.querySelector('#wakeup-word')?.value?.trim() || '你好助手'
+      const endingWord = panel.querySelector('#wakeup-ending')?.value?.trim() || '说完了'
+      
+      const result = saveWakeupConfig({ enabled, wakeupWord, endingWord })
+      if (result.success) {
+        wakeupSaveBtn.textContent = t('settings.password.success')
+        wakeupSaveBtn.classList.add('success')
+        setTimeout(() => {
+          wakeupSaveBtn.textContent = t('settings.password.submit')
+          wakeupSaveBtn.classList.remove('success')
+        }, 2000)
+        
+        // 如果开启唤醒，请求权限
+        if (enabled) {
+          const granted = await requestWakeupPermission()
+          if (!granted) {
+            // 修复：权限拒绝时不使用 alert，改为 UI 提示并自动取消勾选
+            wakeupSaveBtn.textContent = t('voice.wakeup.permission.denied')
+            wakeupSaveBtn.classList.add('error')
+            if (wakeupEnabledCheckbox) {
+              wakeupEnabledCheckbox.checked = false
+            }
+            const wakeupConfigRow = panel.querySelector('#wakeup-config-row')
+            if (wakeupConfigRow) {
+              wakeupConfigRow.style.display = 'none'
+            }
+            setTimeout(() => {
+              wakeupSaveBtn.textContent = t('settings.password.submit')
+              wakeupSaveBtn.classList.remove('error')
+            }, 3000)
+          }
+        }
+      } else {
+        wakeupSaveBtn.textContent = result.error || t('settings.password.error.fail')
+        wakeupSaveBtn.classList.add('error')
+      }
+    }
+  }
+
   // 修改密码
   const pwdSubmit = panel.querySelector('#pwd-submit')
   if (pwdSubmit) {
@@ -255,4 +317,47 @@ function renderNotifySection() {
   }
   // 'default' — 未请求过
   return `<button class="settings-toggle" id="notify-enable-btn">${t('settings.notify.enable')}</button>`
+}
+
+/**
+ * 渲染语音唤醒设置 HTML 片段
+ */
+function renderWakeupSection() {
+  if (!isWakeupSupported()) {
+    return `<span class="settings-notify-status muted">${t('voice.service.unavailable')}</span>`
+  }
+  
+  const config = getWakeupConfig()
+  
+  return `
+    <div class="wakeup-settings">
+      <div class="wakeup-toggle-row">
+        <label class="wakeup-toggle-label">
+          <input type="checkbox" id="wakeup-enabled" ${config.enabled ? 'checked' : ''} />
+          <span>${t('voice.wakeup.enable')}</span>
+        </label>
+      </div>
+      
+      <div class="wakeup-input-row" style="${config.enabled ? '' : 'display:none'}" id="wakeup-config-row">
+        <div class="wakeup-input-group">
+          <label>${t('voice.wakeup.word')}</label>
+          <input type="text" id="wakeup-word" value="${escapeHtml(config.wakeupWord)}" placeholder="${t('voice.wakeup.word.placeholder')}" />
+        </div>
+        
+        <div class="wakeup-input-group">
+          <label>${t('voice.wakeup.ending')}</label>
+          <input type="text" id="wakeup-ending" value="${escapeHtml(config.endingWord)}" placeholder="${t('voice.wakeup.ending.placeholder')}" />
+          <div class="wakeup-hint">${t('voice.wakeup.ending.hint')}</div>
+        </div>
+        
+        <button class="settings-toggle" id="wakeup-save-btn" style="margin-top:12px;width:100%">${t('settings.password.submit')}</button>
+      </div>
+    </div>
+  `
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div')
+  div.textContent = str || ''
+  return div.innerHTML
 }

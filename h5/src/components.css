@@ -546,6 +546,72 @@
 .settings-notify-status.warn { color: var(--danger, #e94560); }
 .settings-notify-status.muted { color: var(--text-secondary, #888); }
 
+/* 语音唤醒设置 */
+.wakeup-settings {
+  padding: 8px 0;
+}
+
+.wakeup-toggle-row {
+  margin-bottom: 12px;
+}
+
+.wakeup-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.wakeup-toggle-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.wakeup-input-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.wakeup-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wakeup-input-group label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.wakeup-input-group input[type="text"] {
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.wakeup-input-group input[type="text"]:focus {
+  border-color: var(--accent);
+}
+
+.wakeup-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 /* 关于区块 */
 .settings-about {
   margin-top: 24px;

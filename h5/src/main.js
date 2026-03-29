@@ -1,9 +1,10 @@
 import './style.css'
 import { wsClient } from './api-client.js'
-import { createChatPage, initChatUI, setSessionKey, loadHistory } from './chat-ui.js'
+import { createChatPage, initChatUI, setSessionKey, loadHistory, setAutoSubmitMode, autoSubmitMessage, focusInput } from './chat-ui.js'
 import { initI18n, t, onLangChange } from './i18n.js'
 import { initTheme } from './theme.js'
 import { initOfflineHandler } from './offline-queue.js'
+import { initWakeup, startListening, stopListening, getWakeupConfig, isSupported as isWakeupSupported } from './voice-wakeup.js'
 
 const STORAGE_KEY = 'clawapp-config'
 const GUIDE_KEY = 'clawapp-guide-shown'
@@ -223,6 +224,9 @@ function initApp() {
         showPage('setup-page')
         chatInitialized = false
       })
+      
+      // 初始化语音唤醒（在 chat UI 初始化后）
+      initWakeupFeature().catch(e => console.error('[main] Wakeup init failed:', e))
     }
     // 确保 DOM 就绪后再加载历史
     requestAnimationFrame(() => loadHistory())
@@ -340,6 +344,64 @@ function showGuideIfNeeded() {
   overlay.querySelector('.guide-btn').onclick = () => overlay.remove()
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
   document.body.appendChild(overlay)
+}
+
+/**
+ * 初始化语音唤醒功能（修复：改为 async，添加 try-catch 和 await）
+ */
+async function initWakeupFeature() {
+  if (!isWakeupSupported()) {
+    console.log('[main] Voice wakeup not supported')
+    return
+  }
+  
+  const config = getWakeupConfig()
+  if (!config.enabled) {
+    console.log('[main] Voice wakeup not enabled')
+    return
+  }
+  
+  console.log('[main] Initializing voice wakeup...')
+  
+  try {
+    // 初始化唤醒监听
+    const initialized = initWakeup(
+      // 唤醒回调
+      () => {
+        console.log('[main] Wakeup triggered!')
+        // 自动聚焦输入框
+        focusInput()
+        // 启用自动提交模式
+        setAutoSubmitMode(true, () => {
+          // 自动提交回调
+          console.log('[main] Auto-submitting message...')
+          // 实际发送由 voice-wakeup 触发
+        })
+      },
+      // 结束语回调（收到完整语音内容）
+      (transcript) => {
+        console.log('[main] Ending detected, content:', transcript)
+        if (transcript) {
+          // 自动提交消息
+          autoSubmitMessage(transcript)
+        }
+        // 重置自动提交模式
+        setAutoSubmitMode(false, null)
+      },
+      // 错误回调
+      (error) => {
+        console.error('[main] Voice wakeup error:', error)
+      }
+    )
+    
+    if (initialized) {
+      // 开始监听
+      startListening()
+      console.log('[main] Voice wakeup started')
+    }
+  } catch (e) {
+    console.error('[main] Voice wakeup initialization error:', e)
+  }
 }
 
 initApp()

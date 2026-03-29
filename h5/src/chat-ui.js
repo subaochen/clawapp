@@ -53,6 +53,8 @@ const SVG_RELOAD = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" 
 
 let _recognition = null
 let _isRecording = false
+let _autoSubmitMode = false
+let _onAutoSubmitCallback = null
 
 function shouldAutoFocusInput() {
   const ua = navigator.userAgent || ''
@@ -1310,4 +1312,69 @@ function showLoadingOverlay() {
 
 function hideLoadingOverlay() {
   document.querySelector('.chat-loading-overlay')?.remove()
+}
+
+/**
+ * 设置自动提交模式（供 voice-wakeup 调用）
+ * @param {boolean} enabled - 是否启用自动提交
+ * @param {Function} onAutoSubmit - 自动提交回调（会触发 sendMessage）
+ */
+export function setAutoSubmitMode(enabled, onAutoSubmit) {
+  _autoSubmitMode = enabled
+  _onAutoSubmitCallback = onAutoSubmit
+}
+
+/**
+ * 获取自动提交模式状态
+ */
+export function isAutoSubmitMode() {
+  return _autoSubmitMode
+}
+
+/**
+ * 自动提交消息（供 voice-wakeup 调用）（修复：使用 finally 确保状态被重置）
+ * @param {string} text - 要提交的文本
+ */
+export function autoSubmitMessage(text) {
+  if (!_autoSubmitMode) return
+  
+  try {
+    // 设置输入框文本
+    _textarea.value = text
+    autoResize()
+    updateSendState()
+    
+    // 直接发送消息
+    if (text.trim()) {
+      handleSendClick()
+    }
+  } finally {
+    // 重置自动提交模式（确保总是执行）
+    setAutoSubmitMode(false, null)
+  }
+}
+
+/**
+ * 聚焦输入框（供 voice-wakeup 调用）
+ */
+export function focusInput() {
+  focusInputIfDesktop()
+}
+
+/**
+ * 设置输入框文本（供 voice-wakeup 调用）
+ * @param {string} text - 文本内容
+ */
+export function setInputText(text) {
+  if (!_textarea) return
+  _textarea.value = text
+  autoResize()
+  updateSendState()
+}
+
+/**
+ * 获取输入框元素（供 voice-wakeup 调用）
+ */
+export function getInputElement() {
+  return _textarea
 }
